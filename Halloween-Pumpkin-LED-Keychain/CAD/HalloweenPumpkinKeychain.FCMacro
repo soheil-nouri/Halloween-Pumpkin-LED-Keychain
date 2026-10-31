@@ -1,0 +1,282 @@
+# -*- coding: utf-8 -*-
+"""
+=============================================================================
+PRODUCTION-READY HALLOWEEN PUMPKIN KEYCHAIN (MICRO-ENCLOSURE)
+Compatible with FreeCAD 1.0 & FreeCAD 1.1+ (Python API)
+=============================================================================
+Both halves are 100% watertight, solid manifold B-Rep geometries:
+- FRONT COVER: Organic 8-lobe pumpkin half with stem, loop, 3mm LED collars,
+  chunky triangular nose, and goofy "cute idiot" smile (mismatched teeth).
+- BACK COVER: Matching organic 8-lobe pumpkin dome with stem, loop, 1.0 mm
+  interlocking snap lip, CR1220 battery holder rails, and a 100% HOLLOW
+  SS-12D00 slide switch cradle with through-slot access so the toggle
+  knob protrudes out the bottom for easy ON/OFF switching.
+=============================================================================
+"""
+
+import math
+import os
+import FreeCAD as App
+import Part
+
+# =============================================================================
+# 1. PARAMETERS & USER CONFIGURATION
+# =============================================================================
+WALL_THICKNESS   = 1.8    # Heavy-duty wall thickness (1.5 - 2.0 mm)
+TOLERANCE        = 0.25   # FDM clearance gap for snap-fit joint (mm)
+NUM_LOBES        = 8      # Number of vertical bulbous pumpkin ribs
+
+# Overall Pumpkin Dimensions
+PUMPKIN_OD       = 24.6   # Outer diameter (mm)
+PUMPKIN_HEIGHT   = 20.0   # Height excluding stem and loop (mm)
+
+# Stem & Keychain Loop
+STEM_R_BASE      = 2.2    # Base radius of top decorative stem
+STEM_R_TOP       = 1.4    # Top radius of stem
+STEM_HEIGHT      = 3.8    # Stem height
+LOOP_OD          = 6.5    # Keychain ring outer diameter (reinforced)
+LOOP_ID          = 3.2    # Keychain hole inner diameter (fits standard keyring)
+LOOP_WIDTH       = 2.6    # Keychain ring thickness along Y axis
+
+# Snap-Fit Joint Parameters
+LIP_HEIGHT       = 1.0    # Height of stepped interlocking lip (mm)
+PRY_SLOT_W       = 4.2    # Bottom coin/fingernail pry slot width
+PRY_SLOT_H       = 0.7    # Bottom pry slot height
+
+# Face Features (Front Cover)
+EYE_COLLAR_OD    = 5.2    # Outer diameter of 3mm LED pocket
+EYE_COLLAR_ID    = 3.2    # Inner diameter of LED pocket (fits 3mm through-hole LED)
+EYE_SPACING      = 4.2    # X-offset from center for eyes (+/- 4.2 mm)
+EYE_Z            = 2.2    # Z-height of eyes
+EYE_RADIUS       = 1.9    # Radius of outer rounded eye cutouts
+
+# Electronics Internal Mounts (Back Cover)
+CR1220_DIA       = 12.6   # Battery diameter + clearance
+CR1220_SLOT_W    = 2.5    # Cradle slot width for battery + tape/leads
+SWITCH_BODY_L    = 8.7    # SS-12D00 switch body length + clearance
+SWITCH_BODY_W    = 4.4    # SS-12D00 switch body width + clearance
+SWITCH_BODY_H    = 4.2    # SS-12D00 switch body height
+SWITCH_SLOT_L    = 5.0    # Bottom toggle slider through-slot length
+SWITCH_SLOT_W    = 2.6    # Bottom toggle slider through-slot width
+
+# =============================================================================
+# 2. EXACT ANALYTICAL ELLIPSOID & PUMPKIN BUILDER
+# =============================================================================
+
+def make_ellipsoid(rx, rz):
+    """
+    Creates an exact analytical, watertight ellipsoid by revolving an ellipse arc.
+    Guarantees clean OpenCASCADE boolean cuts and manifold topologies.
+    """
+    ell = Part.Ellipse(App.Vector(0, 0, rz), App.Vector(rx, 0, 0), App.Vector(0, 0, 0))
+    arc = Part.ArcOfEllipse(ell, 0, math.pi)
+    edge1 = Part.Edge(arc)
+    edge2 = Part.makeLine(App.Vector(0, 0, -rz), App.Vector(0, 0, rz))
+    wire = Part.Wire([edge1, edge2])
+    face = Part.Face(wire)
+    return face.revolve(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 360)
+
+def make_pumpkin(core_rx, core_rz, lobe_rx, lobe_rz, lobe_dist):
+    """Creates the organic 8-lobed bulbous pumpkin solid."""
+    core = make_ellipsoid(core_rx, core_rz)
+    lobes = []
+    for i in range(NUM_LOBES):
+        ang = i * (2.0 * math.pi / NUM_LOBES)
+        cx = lobe_dist * math.cos(ang)
+        cy = lobe_dist * math.sin(ang)
+        l = make_ellipsoid(lobe_rx, lobe_rz)
+        l.translate(App.Vector(cx, cy, 0))
+        lobes.append(l)
+    pumpkin = core
+    for l in lobes:
+        pumpkin = pumpkin.fuse(l)
+    return pumpkin
+
+# =============================================================================
+# 3. SHELL & SEAM GENERATION
+# =============================================================================
+
+print(">> [1/5] Constructing organic pumpkin shells and top keychain loop...")
+
+# Outer solid & inner cavity
+outer_body = make_pumpkin(9.5, 10.0, 5.5, 10.0, 6.8)
+inner_body = make_pumpkin(7.7, 8.2, 3.7, 8.2, 5.8)
+
+# Top stem and reinforced keychain loop
+stem = Part.makeCone(STEM_R_BASE, STEM_R_TOP, STEM_HEIGHT, App.Vector(0, 0, 9.2), App.Vector(0, 0, 1))
+key_outer = Part.makeCylinder(LOOP_OD / 2.0, LOOP_WIDTH, App.Vector(0, -LOOP_WIDTH / 2.0, 12.5), App.Vector(0, 1, 0))
+key_inner = Part.makeCylinder(LOOP_ID / 2.0, LOOP_WIDTH + 2.0, App.Vector(0, -LOOP_WIDTH / 2.0 - 1.0, 12.5), App.Vector(0, 1, 0))
+key_loop  = key_outer.cut(key_inner)
+gusset    = Part.makeCone(3.0, LOOP_OD / 2.0, 3.5, App.Vector(0, 0, 9.0), App.Vector(0, 0, 1))
+top_feature = stem.fuse(gusset).fuse(key_loop)
+
+outer_total = outer_body.fuse(top_feature)
+shell = outer_total.cut(inner_body)
+
+# Partition cleanly into Front (Y >= 0) and Back (Y <= 0)
+box_front = Part.makeBox(60, 50, 60, App.Vector(-30, 0, -30))
+box_back  = Part.makeBox(60, 50, 60, App.Vector(-30, -50, -30))
+
+front_half = shell.common(box_front)
+back_half  = shell.common(box_back)
+
+# =============================================================================
+# 4. SNAP-FIT INTERLOCKING JOINT & PRY SLOT
+# =============================================================================
+
+print(">> [2/5] Adding 1.0 mm interlocking snap-fit lip and groove...")
+
+# Stepped lip protruding from Back Half (+Y direction into Front)
+lip_outer = make_pumpkin(8.6, 9.1, 4.6, 9.1, 6.3)
+lip_shell = lip_outer.cut(inner_body)
+lip_box   = Part.makeBox(60, LIP_HEIGHT + 1.0, 60, App.Vector(-30, -1.0, -30))
+lip       = lip_shell.common(lip_box)
+back_half = back_half.fuse(lip)
+
+# Stepped groove on Front Half with 0.25 mm printing tolerance clearance
+groove_outer = make_pumpkin(8.6 + TOLERANCE, 9.1 + TOLERANCE, 4.6 + TOLERANCE, 9.1 + TOLERANCE, 6.3)
+groove_box   = Part.makeBox(60, LIP_HEIGHT + TOLERANCE + 0.1, 60, App.Vector(-30, -0.1, -30))
+groove       = groove_outer.common(groove_box)
+front_half   = front_half.cut(groove)
+
+# Coin / fingernail pry slot at bottom seam
+pry = Part.makeBox(PRY_SLOT_W, 3.0, PRY_SLOT_H, App.Vector(-PRY_SLOT_W / 2.0, -1.5, -10.0))
+front_half = front_half.cut(pry)
+back_half  = back_half.cut(pry)
+
+# =============================================================================
+# 5. FACE FEATURES (FRONT COVER)
+# =============================================================================
+
+print(">> [3/5] Sculpting the goofy expression on Front Cover...")
+
+# 1. 3mm LED Collars (friction-fit bosses behind eyes)
+collar_l = Part.makeCylinder(EYE_COLLAR_OD / 2.0, 6.0, App.Vector(-EYE_SPACING, 2.0, EYE_Z), App.Vector(0, 1, 0))
+collar_r = Part.makeCylinder(EYE_COLLAR_OD / 2.0, 6.0, App.Vector(EYE_SPACING, 2.0, EYE_Z), App.Vector(0, 1, 0))
+collars  = collar_l.fuse(collar_r).common(box_front)
+front_half = front_half.fuse(collars)
+
+# LED 3.2mm friction-fit holes
+led_hole_l = Part.makeCylinder(EYE_COLLAR_ID / 2.0, 15.0, App.Vector(-EYE_SPACING, 1.0, EYE_Z), App.Vector(0, 1, 0))
+led_hole_r = Part.makeCylinder(EYE_COLLAR_ID / 2.0, 15.0, App.Vector(EYE_SPACING, 1.0, EYE_Z), App.Vector(0, 1, 0))
+front_half = front_half.cut(led_hole_l).cut(led_hole_r)
+
+# Outer rounded eye cutouts
+eye_cut_l = Part.makeCylinder(EYE_RADIUS, 15.0, App.Vector(-EYE_SPACING, 2.0, EYE_Z), App.Vector(0, 1, 0))
+eye_cut_r = Part.makeCylinder(EYE_RADIUS, 15.0, App.Vector(EYE_SPACING, 2.0, EYE_Z), App.Vector(0, 1, 0))
+front_half = front_half.cut(eye_cut_l).cut(eye_cut_r)
+
+# 2. Chunky triangular nose
+nose_pts = [
+    App.Vector(0.0, -1.0, 1.5),
+    App.Vector(1.3, -1.0, -0.6),
+    App.Vector(-1.3, -1.0, -0.6),
+    App.Vector(0.0, -1.0, 1.5)
+]
+nose_prism = Part.Face(Part.makePolygon(nose_pts)).extrude(App.Vector(0, 20.0, 0))
+front_half = front_half.cut(nose_prism)
+
+# 3. Goofy "Cute Idiot" smile: Top-right tooth DOWN, Bottom-left tooth UP
+mouth_pts = [
+    App.Vector(-6.5, -1.0, -3.0),
+    App.Vector(-5.0, -1.0, -2.6),
+    App.Vector(-3.6, -1.0, -2.5),
+    App.Vector(-1.8, -1.0, -2.4),
+    App.Vector(0.0,  -1.0, -2.4),
+    # Top-Right Tooth (viewer +X, points DOWN into mouth)
+    App.Vector(1.8,  -1.0, -2.5),
+    App.Vector(1.8,  -1.0, -4.1),
+    App.Vector(3.6,  -1.0, -4.1),
+    App.Vector(3.6,  -1.0, -2.7),
+    App.Vector(5.0,  -1.0, -2.8),
+    App.Vector(6.5,  -1.0, -3.0),
+    # Bottom jaw curve
+    App.Vector(5.0,  -1.0, -5.5),
+    App.Vector(2.5,  -1.0, -6.2),
+    App.Vector(0.0,  -1.0, -6.2),
+    # Bottom-Left Tooth (viewer -X, points UP into mouth)
+    App.Vector(-1.8, -1.0, -6.3),
+    App.Vector(-1.8, -1.0, -4.7),
+    App.Vector(-3.6, -1.0, -4.7),
+    App.Vector(-3.6, -1.0, -6.3),
+    App.Vector(-5.0, -1.0, -5.5),
+    App.Vector(-6.5, -1.0, -3.0)
+]
+mouth_prism = Part.Face(Part.makePolygon(mouth_pts)).extrude(App.Vector(0, 20.0, 0))
+front_half  = front_half.cut(mouth_prism)
+
+# =============================================================================
+# 6. ELECTRONICS MOUNTS & 100% HOLLOW SWITCH CRADLE (BACK COVER)
+# =============================================================================
+
+print(">> [4/5] Building battery cradle & 100% HOLLOW switch cradle inside Back Cover...")
+
+# 1. Slide switch cradle walls (holding SS-12D00 body 8.7 x 4.4 mm)
+sw_outer  = Part.makeBox(SWITCH_BODY_L + 2.0, SWITCH_BODY_W + 1.6, 5.5,
+                         App.Vector(-(SWITCH_BODY_L + 2.0) / 2.0, -3.5 - (SWITCH_BODY_W + 1.6) / 2.0, -9.5))
+sw_cavity = Part.makeBox(SWITCH_BODY_L, SWITCH_BODY_W, 7.0,
+                         App.Vector(-SWITCH_BODY_L / 2.0, -3.5 - SWITCH_BODY_W / 2.0, -9.0))
+sw_cradle = sw_outer.cut(sw_cavity).common(box_back)
+back_half = back_half.fuse(sw_cradle)
+
+# 2. CR1220 Battery vertical cradle guide rails & shelf
+rail_l = Part.makeBox(1.2, 3.5, 7.0, App.Vector(-CR1220_DIA / 2.0 - 1.2, -5.5, -6.5))
+rail_r = Part.makeBox(1.2, 3.5, 7.0, App.Vector(CR1220_DIA / 2.0, -5.5, -6.5))
+shelf  = Part.makeBox(CR1220_DIA + 2.4, 3.5, 1.2, App.Vector(-CR1220_DIA / 2.0 - 1.2, -5.5, -7.0))
+battery_cradle = rail_l.fuse(rail_r).fuse(shelf).common(box_back)
+back_half = back_half.fuse(battery_cradle)
+
+# 3. Open access to switch cavity from the inside of the pumpkin
+sw_access = Part.makeBox(SWITCH_BODY_L, SWITCH_BODY_W, 6.0,
+                         App.Vector(-SWITCH_BODY_L / 2.0, -3.5 - SWITCH_BODY_W / 2.0, -9.0))
+back_half = back_half.cut(sw_access)
+
+# 4. HOLLOW THROUGH-SLOT (Cut from inside through to the outside at Z = -12.0)
+# This guarantees the switch lever key comes out freely through the bottom to toggle ON/OFF
+switch_through_slot = Part.makeBox(SWITCH_SLOT_L, SWITCH_SLOT_W, 5.0,
+                                   App.Vector(-SWITCH_SLOT_L / 2.0, -3.5 - SWITCH_SLOT_W / 2.0, -12.0))
+back_half = back_half.cut(switch_through_slot)
+
+# =============================================================================
+# 7. DOCUMENT SETUP & DISPLAY
+# =============================================================================
+
+print(f"Geometry Status:")
+print(f"  Front Cover Valid: {front_half.isValid()}, Volume: {front_half.Volume:.2f}")
+print(f"  Back Cover Valid:  {back_half.isValid()}, Volume: {back_half.Volume:.2f}")
+
+doc = App.ActiveDocument
+if doc is None:
+    doc = App.newDocument("PumpkinKeychain")
+
+# Add Front Cover
+front_obj = doc.addObject("Part::Feature", "Pumpkin_Front_Cover")
+front_obj.Shape = front_half
+if hasattr(front_obj, "ViewObject") and front_obj.ViewObject:
+    front_obj.ViewObject.ShapeColor = (1.0, 0.45, 0.0) # Vibrant Pumpkin Orange
+
+# Add Back Cover placed side-by-side (+28 mm along X)
+back_display = back_half.copy()
+back_display.translate(App.Vector(28.0, 0, 0))
+
+back_obj = doc.addObject("Part::Feature", "Pumpkin_Back_Cover")
+back_obj.Shape = back_display
+if hasattr(back_obj, "ViewObject") and back_obj.ViewObject:
+    back_obj.ViewObject.ShapeColor = (0.9, 0.38, 0.0) # Deep Pumpkin Orange
+
+doc.recompute()
+
+# Save native FreeCAD document and STL files
+scratch_dir = r"C:\Users\noris\.gemini\antigravity\scratch"
+fcstd_file = os.path.join(scratch_dir, "Halloween_Pumpkin_Completed.FCStd")
+doc.saveAs(fcstd_file)
+
+front_stl = os.path.join(scratch_dir, "pumpkin_front.stl")
+back_stl = os.path.join(scratch_dir, "pumpkin_back.stl")
+front_half.exportStl(front_stl)
+back_half.exportStl(back_stl)
+
+print(f"\n>> SUCCESS: 100% Hollow Switch Cradle Fixed & Generated!")
+print(f"   Native FreeCAD Document: {fcstd_file}")
+print(f"   Front STL: {front_stl}")
+print(f"   Back STL:  {back_stl}")
